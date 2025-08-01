@@ -1,0 +1,4 @@
+eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,address
+0.02,0.0,11,0,11,0x5bf72c54c28a1e97e549e718200e00a661be7d8c
+0.0,0.01,7,1,8,0x73b642c6f9d63cb8af0db384c98e57ccd312dba6
+0.0,0.01,0,16,16,0x68574c202bbcdf1d65d0f798ed8d8229547f397f

@@ -1,0 +1,3 @@
+eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,address
+1.8038398e-11,0.0,1414,0,1414,0xc0f2eacf7544d7b1709901db43810f917141e9ab
+0.0,1.8038398e-11,0,1414,1414,0x3708f5c9533557b1633c7a255ed385348488aeae
