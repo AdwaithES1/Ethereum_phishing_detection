@@ -1,4 +1,4 @@
-eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,address,account_age_days,avg_time_diff_hours,avg_tx_value,std_dev_tx_value
-0.003,0.0,1,0,1,0xeab190c546533891d69d39d6fe7e3865d080bdf5,0.0,0.0,0.003,0.0
-0.0,0.003,6,1,7,0x14fec1b5cf0683345c09b22df363fb7b8ff04dbd,8.965,35.86,0.0004285714285714286,0.0011338934190276817
-0.0,0.0,0,11205,11205,0xdac17f958d2ee523a2206206994597c13d831ec7,1959.5113425925927,4.197453786346146,0.0,0.0
+eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,in_degree,out_degree,sent_received_ratio,address,account_age_days,avg_time_diff_hours,avg_tx_value,std_dev_tx_value
+0.003,0.0,1,0,1,0,1,3000.0,0xeab190c546533891d69d39d6fe7e3865d080bdf5,0.0,0.0,0.003,0.0
+0.0,0.003,6,1,7,1,1,0.0,0x14fec1b5cf0683345c09b22df363fb7b8ff04dbd,8.965,35.86,0.0004285714285714286,0.0011338934190276817
+0.0,0.0,0,11205,11205,394,0,0.0,0xdac17f958d2ee523a2206206994597c13d831ec7,1959.5113425925927,4.197453786346146,0.0,0.0

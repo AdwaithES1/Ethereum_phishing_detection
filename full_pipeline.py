@@ -3,30 +3,29 @@ import random
 import pandas as pd
 import numpy as np
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn import Linear, Dropout
-# --- MODIFIED: Reverted back to SAGEConv ---
-from torch_geometric.nn import SAGEConv
+from torch_geometric.nn import SAGEConv, global_mean_pool
 from torch_geometric.data import Dataset, Data, DataLoader
 from torch.utils.data.sampler import WeightedRandomSampler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.preprocessing import MinMaxScaler
 
-# --- Configuration ---
+# --- Configuration for the Best Performing Model ---
 PROCESSED_DIR = 'processed_subgraphs'
-# --- MODIFIED: Train for more epochs ---
-NUM_EPOCHS = 100
+NUM_EPOCHS = 70
 LEARNING_RATE = 0.0001
 BATCH_SIZE = 32
 HIDDEN_CHANNELS = 256
 
 # --- 1. Custom Dataset Class ---
 class PhishingSubgraphDataset(Dataset):
-    def __init__(self, root, transform=None, pre_transform=None):
+    def __init__(self, root, scaler, transform=None, pre_transform=None):
         super(PhishingSubgraphDataset, self).__init__(root, transform, pre_transform)
         self.node_files = [f for f in os.listdir(self.root) if f.endswith('_nodes.csv')]
-        self.scaler = MinMaxScaler()
+        self.scaler = scaler
 
     @property
     def raw_file_names(self):
@@ -61,8 +60,12 @@ class PhishingSubgraphDataset(Dataset):
         nodes_df = nodes_df.fillna(0)
 
         if not nodes_df.empty:
+            skewed_features = ['eth_sent', 'eth_received', 'avg_tx_value', 'std_dev_tx_value']
+            for col in skewed_features:
+                nodes_df[col] = np.log1p(nodes_df[col])
+
             features_to_scale = nodes_df[feature_cols].values
-            scaled_features = self.scaler.fit_transform(features_to_scale)
+            scaled_features = self.scaler.transform(features_to_scale)
             x = torch.tensor(scaled_features, dtype=torch.float)
         else:
             x = torch.empty((0, len(feature_cols)), dtype=torch.float)
@@ -88,8 +91,19 @@ class PhishingSubgraphDataset(Dataset):
         data = Data(x=x, edge_index=edge_index, y=y, root_node_idx=root_node_idx)
         return data
 
+# --- NEW: Focal Loss Class ---
+class FocalLoss(nn.Module):
+    def __init__(self, alpha=1, gamma=2):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+
+    def forward(self, inputs, targets):
+        ce_loss = F.cross_entropy(inputs, targets, reduction='none')
+        pt = torch.exp(-ce_loss)
+        return (self.alpha * (1 - pt) ** self.gamma * ce_loss).mean()
+
 # --- 2. GNN Model Architecture ---
-# --- MODIFIED: Reverted to GraphSAGE model ---
 class GraphSAGE_4Layer(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels):
         super(GraphSAGE_4Layer, self).__init__()
@@ -98,11 +112,11 @@ class GraphSAGE_4Layer(torch.nn.Module):
         self.conv3 = SAGEConv(hidden_channels, hidden_channels)
         self.conv4 = SAGEConv(hidden_channels, hidden_channels)
         
-        self.classifier = Linear(hidden_channels, out_channels)
+        self.classifier = Linear(hidden_channels * 2, out_channels)
         self.dropout = Dropout(p=0.5)
 
     def forward(self, data):
-        x, edge_index, root_node_idx = data.x, data.edge_index, data.root_node_idx
+        x, edge_index, root_node_idx, batch = data.x, data.edge_index, data.root_node_idx, data.batch
 
         x = F.relu(self.conv1(x, edge_index))
         x = self.dropout(x)
@@ -113,7 +127,10 @@ class GraphSAGE_4Layer(torch.nn.Module):
         x = F.relu(self.conv4(x, edge_index))
 
         root_embedding = x[root_node_idx]
-        output = self.classifier(root_embedding)
+        graph_embedding = global_mean_pool(x, batch)
+        combined_embedding = torch.cat([root_embedding, graph_embedding], dim=1)
+        
+        output = self.classifier(combined_embedding)
         return output
 
 # --- 3. Training and Evaluation Logic ---
@@ -130,30 +147,51 @@ def train(model, loader, optimizer, criterion, device):
         total_loss += loss.item() * data.num_graphs
     return total_loss / len(loader.dataset)
 
+# --- MODIFIED: Evaluate function now returns probabilities for threshold tuning ---
 def evaluate(model, loader, device):
     model.eval()
-    all_preds = []
+    all_probs = []
     all_labels = []
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             out = model(data)
-            pred = out.argmax(dim=1)
-            all_preds.extend(pred.cpu().numpy())
+            # Get probabilities for the 'phishing' class
+            probs = F.softmax(out, dim=1)[:, 1] 
+            all_probs.extend(probs.cpu().numpy())
             all_labels.extend(data.y.cpu().numpy())
             
-    accuracy = accuracy_score(all_labels, all_preds)
-    precision = precision_score(all_labels, all_preds, zero_division=0)
-    recall = recall_score(all_labels, all_preds, zero_division=0)
-    f1 = f1_score(all_labels, all_preds, zero_division=0)
-    return accuracy, precision, recall, f1
+    return np.array(all_probs), np.array(all_labels)
 
 # --- 4. Main Execution Block ---
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
-    dataset = PhishingSubgraphDataset(root=PROCESSED_DIR)
+    print("Pre-calculating global feature statistics for normalization...")
+    all_node_files = [os.path.join(PROCESSED_DIR, f) for f in os.listdir(PROCESSED_DIR) if f.endswith('_nodes.csv')]
+    
+    all_nodes_df = pd.concat([pd.read_csv(f) for f in all_node_files])
+    
+    feature_cols = [
+        'eth_sent', 'eth_received', 'num_sent_txs', 'num_received_txs', 
+        'total_txs', 'account_age_days', 'avg_time_diff_hours', 
+        'avg_tx_value', 'std_dev_tx_value'
+    ]
+    for col in feature_cols:
+        if col not in all_nodes_df.columns:
+            all_nodes_df[col] = 0
+    all_nodes_df = all_nodes_df.fillna(0)
+    
+    skewed_features = ['eth_sent', 'eth_received', 'avg_tx_value', 'std_dev_tx_value']
+    for col in skewed_features:
+        all_nodes_df[col] = np.log1p(all_nodes_df[col])
+
+    global_scaler = MinMaxScaler()
+    global_scaler.fit(all_nodes_df[feature_cols].values)
+    print("Global scaler has been fitted on log-transformed data.")
+
+    dataset = PhishingSubgraphDataset(root=PROCESSED_DIR, scaler=global_scaler)
     
     if len(dataset) == 0:
         print("Dataset is empty. Please check your 'processed_subgraphs' directory.")
@@ -172,32 +210,25 @@ if __name__ == '__main__':
         
         print(f"Dataset split: {len(train_dataset)} train, {len(val_dataset)} validation, {len(test_dataset)} test.")
 
-        # Implement oversampling for the training set
-        train_labels = [labels[i] for i in train_indices]
-        class_counts = np.bincount(train_labels)
-        if len(class_counts) > 1:
-            class_weights = 1. / class_counts
-            sample_weights = np.array([class_weights[label] for label in train_labels])
-            sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
-            train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler)
-        else:
-            train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-        
+        train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
         test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-        # --- MODIFIED: Reverted to GraphSAGE model ---
         model = GraphSAGE_4Layer(in_channels=9, hidden_channels=HIDDEN_CHANNELS, out_channels=2).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
         
-        criterion = torch.nn.CrossEntropyLoss()
-
+        criterion = FocalLoss().to(device)
+        
         best_val_f1 = 0
         best_model_state = None
 
         for epoch in range(1, NUM_EPOCHS + 1):
             loss = train(model, train_loader, optimizer, criterion, device)
-            val_acc, val_prec, val_recall, val_f1 = evaluate(model, val_loader, device)
+            val_probs, val_labels = evaluate(model, val_loader, device)
+            # Use default 0.5 threshold for validation during training
+            val_preds = (val_probs > 0.5).astype(int)
+            val_f1 = f1_score(val_labels, val_preds)
+            val_acc = accuracy_score(val_labels, val_preds)
             
             print(f'Epoch: {epoch:02d}, Loss: {loss:.4f}, Val F1: {val_f1:.4f}, Val Acc: {val_acc:.4f}')
 
@@ -210,11 +241,33 @@ if __name__ == '__main__':
         print("\n--- Final Test Evaluation ---")
         if os.path.exists('best_model.pth'):
             model.load_state_dict(torch.load('best_model.pth'))
-            test_acc, test_prec, test_recall, test_f1 = evaluate(model, test_loader, device)
             
-            print(f'Test Accuracy: {test_acc:.4f}')
-            print(f'Test Precision: {test_prec:.4f}')
-            print(f'Test Recall: {test_recall:.4f}')
-            print(f'Test F1 Score: {test_f1:.4f}')
+            # --- NEW: Find the best threshold on the validation set ---
+            print("\nFinding optimal threshold on validation set...")
+            val_probs, val_labels = evaluate(model, val_loader, device)
+            best_threshold = 0
+            best_f1 = 0
+            for threshold in np.arange(0.1, 1.0, 0.05):
+                preds = (val_probs > threshold).astype(int)
+                f1 = f1_score(val_labels, preds)
+                if f1 > best_f1:
+                    best_f1 = f1
+                    best_threshold = threshold
+            print(f"Optimal threshold found: {best_threshold:.2f} with F1 score: {best_f1:.4f}")
+
+            # --- NEW: Evaluate on the test set using the optimal threshold ---
+            print("\nEvaluating on test set with optimal threshold...")
+            test_probs, test_labels = evaluate(model, test_loader, device)
+            test_preds = (test_probs > best_threshold).astype(int)
+            
+            test_acc = accuracy_score(test_labels, test_preds)
+            test_prec = precision_score(test_labels, test_preds)
+            test_recall = recall_score(test_labels, test_preds)
+            test_f1 = f1_score(test_labels, test_preds)
+
+            print(f'Test Accuracy: {test_acc * 100:.2f}%')
+            print(f'Test Precision: {test_prec * 100:.2f}%')
+            print(f'Test Recall: {test_recall * 100:.2f}%')
+            print(f'Test F1 Score: {test_f1 * 100:.2f}%')
         else:
             print("No best model was saved during training.")
