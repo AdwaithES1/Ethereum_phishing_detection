@@ -1,5 +1,5 @@
-eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,address
-0.0,0.0,5,0,5,0xbb0ea877a85df253ccc312b80c644da31443abfd
-0.0,0.0,1,0,1,0x0b72343fc14bac84166ee9fe69f0cde4a086e20f
-0.0,0.0,3,0,3,0x9f3418daf68467e6121cca2ee977dbdd1d587f7b
-0.0,0.0,0,8,8,0xc94a6e7776bade5da316cf6fd8c751fb0d5c3c5e
+eth_sent,eth_received,num_sent_txs,num_received_txs,total_txs,address,account_age_days,avg_time_diff_hours,avg_tx_value,std_dev_tx_value
+0.0,0.0,5,0,5,0xbb0ea877a85df253ccc312b80c644da31443abfd,59.36337962962963,356.1802777777778,0.0,0.0
+0.0,0.0,1,0,1,0x0b72343fc14bac84166ee9fe69f0cde4a086e20f,0.0,0.0,0.0,0.0
+0.0,0.0,3,0,3,0x9f3418daf68467e6121cca2ee977dbdd1d587f7b,0.02564814814814815,0.30777777777777776,0.0,0.0
+0.0,0.0,0,8,8,0xc94a6e7776bade5da316cf6fd8c751fb0d5c3c5e,286.67116898148146,982.8725793650794,0.0,0.0
