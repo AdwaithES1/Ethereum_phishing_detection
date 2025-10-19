@@ -13,14 +13,14 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.preprocessing import MinMaxScaler
 
-# --- Configuration for the Best Performing Model ---
+#Configuration for the Best Performing Model
 PROCESSED_DIR = 'processed_subgraphs'
 NUM_EPOCHS = 70
 LEARNING_RATE = 0.0001
 BATCH_SIZE = 32
 HIDDEN_CHANNELS = 256
 
-# --- 1. Custom Dataset Class ---
+#Custom Dataset Class
 class PhishingSubgraphDataset(Dataset):
     def __init__(self, root, scaler, transform=None, pre_transform=None):
         super(PhishingSubgraphDataset, self).__init__(root, transform, pre_transform)
@@ -91,7 +91,7 @@ class PhishingSubgraphDataset(Dataset):
         data = Data(x=x, edge_index=edge_index, y=y, root_node_idx=root_node_idx)
         return data
 
-# --- NEW: Focal Loss Class ---
+#Focal Loss Class
 class FocalLoss(nn.Module):
     def __init__(self, alpha=1, gamma=2):
         super().__init__()
@@ -133,7 +133,7 @@ class GraphSAGE_4Layer(torch.nn.Module):
         output = self.classifier(combined_embedding)
         return output
 
-# --- 3. Training and Evaluation Logic ---
+#Training and Evaluation Logic
 def train(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0
@@ -147,7 +147,7 @@ def train(model, loader, optimizer, criterion, device):
         total_loss += loss.item() * data.num_graphs
     return total_loss / len(loader.dataset)
 
-# --- MODIFIED: Evaluate function now returns probabilities for threshold tuning ---
+#Evaluate function for returning probabilities for threshold tuning
 def evaluate(model, loader, device):
     model.eval()
     all_probs = []
@@ -156,14 +156,14 @@ def evaluate(model, loader, device):
         for data in loader:
             data = data.to(device)
             out = model(data)
-            # Get probabilities for the 'phishing' class
+            #For probabilities of the 'phishing' class
             probs = F.softmax(out, dim=1)[:, 1] 
             all_probs.extend(probs.cpu().numpy())
             all_labels.extend(data.y.cpu().numpy())
             
     return np.array(all_probs), np.array(all_labels)
 
-# --- 4. Main Execution Block ---
+#Main Execution Block
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -255,7 +255,7 @@ if __name__ == '__main__':
                     best_threshold = threshold
             print(f"Optimal threshold found: {best_threshold:.2f} with F1 score: {best_f1:.4f}")
 
-            # --- NEW: Evaluate on the test set using the optimal threshold ---
+            #Evaluating on the test set using the optimal threshold
             print("\nEvaluating on test set with optimal threshold...")
             test_probs, test_labels = evaluate(model, test_loader, device)
             test_preds = (test_probs > best_threshold).astype(int)
